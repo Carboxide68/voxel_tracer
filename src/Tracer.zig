@@ -10,17 +10,14 @@ const buffer = @import("utils/buffer.zig");
 const Buffer = buffer.Buffer;
 const VertexArray = buffer.VertexArray;
 const Shader = @import("utils/shader.zig").Shader;
+const Camera = @import("Camera.zig");
+const Ray = Camera.Ray;
 
 const Tracer = @This();
 
 pub const Box = struct {
     min: Vec3,
     max: Vec3,
-};
-
-pub const Ray = struct {
-    start: Vec3,
-    direction: Vec3,
 };
 
 pub const Hit = struct {
@@ -98,7 +95,7 @@ pub fn draw(self: *Tracer) void {
 }
 
 pub fn trace(self: Tracer, ray: Ray) ?Hit {
-    const pos = ray.position;
+    const pos = ray.origin;
     const n_inv = Vec3.fromData(.{ 1 / ray.direction.x, 1 / ray.direction.y, 1 / ray.direction.z });
     return hit_blk: for (self.boxes.items, 0..) |box, i| {
         const t1 = Vec3.fromSimd((box.min.simd() - pos.simd()) * n_inv.simd());
