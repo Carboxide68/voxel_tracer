@@ -6,6 +6,7 @@ const c = @import("c.zig");
 
 pub fn main() !void {
     var allocator = std.heap.GeneralPurposeAllocator(.{}){};
+    defer allocator.deinit();
     const a = allocator.allocator();
 
     var renderer = try Renderer.init();
@@ -14,6 +15,7 @@ pub fn main() !void {
     var tracer = try Tracer.init(a);
     defer tracer.destroy();
 
+    Tracer.tester();
     tracer.addCube(
         .{ .x = 0, .y = 0, .z = 3 },
         0.25,
@@ -28,6 +30,7 @@ pub fn main() !void {
     while (renderer.draw_frame()) {
         _ = c.igBegin("Custom Window", 0, 0);
         if (Renderer.button("Trace Scene")) {
+            log.info("Tracing scene...", .{});
             tracer.trace_scene();
         }
 

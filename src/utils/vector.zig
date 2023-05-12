@@ -86,7 +86,7 @@ pub fn Vec3T(comptime T: type) type {
         y: T,
         z: T,
 
-        pub fn cross(this: @This(), other: @This()) @This() {
+        pub inline fn cross(this: @This(), other: @This()) @This() {
             return .{
                 .x = this.y * other.z - this.z * other.y,
                 .y = this.z * other.x - this.x * other.z,

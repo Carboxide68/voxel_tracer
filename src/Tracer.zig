@@ -26,6 +26,10 @@ pub const Hit = struct {
     hit_index: u32,
 };
 
+pub const Timings = struct {
+    pub var trace_scene: i128 = 0;
+};
+
 a: std.mem.Allocator,
 
 boxes: std.ArrayList(Box),
@@ -96,6 +100,11 @@ pub fn addBox(self: *Tracer, min: Vec3, max: Vec3, color: Vec3) void {
 }
 
 pub fn trace_scene(self: *Tracer) void {
+    const fun_begin = std.time.nanoTimestamp();
+    defer {
+        Timings.trace_scene = std.time.nanoTimestamp() - fun_begin;
+        log.info("Trace Scene took {}ms!", .{@divFloor(Timings.trace_scene, 1000)});
+    }
     const w = @intToFloat(f32, self.frame[0]);
     const h = @intToFloat(f32, self.frame[1]);
     for (0..self.frame[1]) |i| {
@@ -133,39 +142,45 @@ pub fn trace(self: Tracer, ray: Ray) ?Hit {
     const pos = ray.origin;
     const n_inv = Vec3.fromData(.{ 1 / ray.direction.x, 1 / ray.direction.y, 1 / ray.direction.z });
     return hit_blk: for (self.boxes.items, 0..) |box, i| {
-        const t1 = Vec3.fromSimd((box.min.simd() - pos.simd()) * n_inv.simd());
-        const t2 = Vec3.fromSimd((box.max.simd() - pos.simd()) * n_inv.simd());
-        const tmax = @max(@reduce(.Max, t1.simd()), @reduce(.Max, t2.simd()));
-        const tmin = @min(@reduce(.Min, t1.simd()), @reduce(.Min, t2.simd()));
+        const t1 = (box.min.simd() - pos.simd()) * n_inv.simd();
+        const t2 = (box.max.simd() - pos.simd()) * n_inv.simd();
+        const tmax = @max(@reduce(.Max, t1), @reduce(.Max, t2));
+        const tmin = @min(@reduce(.Min, t1), @reduce(.Min, t2));
 
-        if (tmax >= tmin and tmax >= 0) {
+        if (tmin < tmax and tmax >= 0) {
             var hit_pos: Vec3 = undefined;
             if (tmin < 0) {
                 hit_pos = pos.add(ray.direction.sMult(tmax));
             } else {
                 hit_pos = pos.add(ray.direction.sMult(tmin));
             }
-            break :hit_blk Hit{ .position = hit_pos, .hit_index = @intCast(u32, i) };
+            break :hit_blk Hit{
+                .position = hit_pos,
+                .hit_index = @intCast(u32, i),
+            };
         }
     } else {
         break :hit_blk null;
     };
 }
 
-test "Tracing" {
-    const a = std.testing.allocator;
-    var tracer = try Tracer.init(a);
-    tracer.addCube(Vec3.fromData(.{
-        0,
-        0,
-        1,
-    }));
+pub fn tester() void {
+    if (@import("builtin").mode != .Debug) return;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const a = gpa.allocator();
+    var tracer = Tracer.init(a) catch unreachable;
+    tracer.addCube(
+        Vec3.fromData(.{ 0, 0, 1 }),
+        0.1,
+        Vec3.fromData(.{ 0.4, 0.4, 0.4 }),
+    );
     std.testing.expect(tracer.trace(Ray{
         .origin = Vec3{ .x = 0, .y = 0, .z = 0 },
         .direction = Vec3{ .x = 0, .y = 0, .z = 1 },
-    }) != null);
+    }) != null) catch unreachable;
     std.testing.expect(tracer.trace(Ray{
         .origin = Vec3{ .x = 0, .y = 0, .z = 0 },
         .direction = Vec3{ .x = 0, .y = 1, .z = 0 },
-    }) == null);
+    }) == null) catch unreachable;
 }
