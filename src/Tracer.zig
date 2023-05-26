@@ -19,14 +19,37 @@ const Tracer = @This();
 const is_debug = @import("builtin").mode == .Debug;
 
 pub const Box = extern struct {
+    pos: Vec3,
+    size: Vec3, //Shouldn't ever contain negative values
+
+    pub fn toAABB(self: Box) AABB {
+        return .{
+            .min = self.pos.sub(self.size),
+            .max = self.pos.add(self.size),
+        };
+    }
+};
+
+pub const AABB = extern struct {
     min: Vec3,
     max: Vec3,
+
+    pub fn toBox(self: AABB) Box {
+        const size = (self.max.simd() - self.min.simd()) / @splat(3, @as(f32, 2));
+        const center = (self.max.simd() + self.min.simd()) / @splat(3, @as(f32, 2));
+        return .{ .pos = center, .size = size };
+    }
+};
+
+pub const SurfaceHit = struct {
+    position: Vec3,
+    normal: Vec3,
 };
 
 pub const Hit = struct {
     position: Vec3,
-    hit_index: u32,
     normal: Vec3,
+    hit_index: u32,
 };
 
 pub const Timings = struct {
@@ -101,18 +124,15 @@ pub fn destroy(self: *Tracer) void {
 }
 
 pub fn addCube(self: *Tracer, pos: Vec3, s: FPrec, color: Vec3) void {
-    self.boxes.append(.{
-        .max = pos.sAdd(s),
-        .min = pos.sSub(s),
+    self.boxes.append(Box{
+        .pos = pos,
+        .size = Vec3.fromSimd(@splat(3, s)),
     }) catch |err| log.err("Failed to add to array! Error: {}", .{err});
     self.colors.append(color) catch |err| log.err("Failed to add to array! Error: {}", .{err});
 }
 
-pub fn addBox(self: *Tracer, min: Vec3, max: Vec3, color: Vec3) void {
-    self.boxes.append(.{
-        .min = min,
-        .max = max,
-    }) catch |err| log.err("Failed to add to array! Error: {}", .{err});
+pub fn addBox(self: *Tracer, box: Box, color: Vec3) void {
+    self.boxes.append(box) catch |err| log.err("Failed to add to array! Error: {}", .{err});
     self.colors.append(color) catch |err| log.err("Failed to add to array! Error: {}", .{err});
 }
 
@@ -195,9 +215,9 @@ pub fn draw(self: *Tracer) void {
     self.vao.drawArrays(.triangles, 0, 6);
 }
 
-pub inline fn aabbHit(n_inv: Vec3, ray_origin: Vec3, box: Box) bool {
-    const t1 = (box.min.simd() - ray_origin.simd()) * n_inv.simd();
-    const t2 = (box.max.simd() - ray_origin.simd()) * n_inv.simd();
+pub inline fn aabbHit(n_inv: Vec3, ray_origin: Vec3, aabb: AABB) bool {
+    const t1 = (aabb.min.simd() - ray_origin.simd()) * n_inv.simd();
+    const t2 = (aabb.max.simd() - ray_origin.simd()) * n_inv.simd();
     const min = @min(t1, t2);
     const max = @max(t1, t2);
     const tmin = @reduce(.Max, min);
@@ -205,23 +225,57 @@ pub inline fn aabbHit(n_inv: Vec3, ray_origin: Vec3, box: Box) bool {
     return tmin < tmax and tmax >= 0;
 }
 
-pub fn boxHit(n_inv: Vec3, pos: Vec3, box: Box) ?Hit {
-    const box_pos = (box.min.simd() + box.max.simd()) / @splat(3, @as(f32, 2));
-    const ro = pos.simd() - box_pos;
-    _ = ro;
-    _ = n_inv;
+pub fn boxHit(ray_d: Vec3, n_inv: Vec3, pos: Vec3, box: Box) ?SurfaceHit {
+    const m = n_inv.simd();
+    const ro = pos.simd() - box.pos.simd();
+    const n = ro * m;
+    const k = box.size.simd() * @fabs(m);
+    const t1 = -k - n;
+    const t2 = k - n;
+    const tn = @reduce(.Max, t1);
+    const tf = @reduce(.Min, t2);
+    log.debug("tN: {}, tF: {}", .{ tn, tf });
+    if (tn > tf or tf < 0) return null;
+    var hit_pos: Vec3 = undefined;
+    const norm = blk: {
+        if (tn > 0) {
+            const tnv = @splat(3, tn);
+            hit_pos = ray_d.sMult(tn);
+            break :blk -std.math.sign(ray_d.simd()) * @select(
+                f32,
+                tnv < t1,
+                @splat(3, @as(f32, 1)),
+                @splat(3, @as(f32, 0)),
+            );
+        } else {
+            const tfv = @splat(3, tf);
+            hit_pos = ray_d.sMult(tf);
+            break :blk -std.math.sign(ray_d.simd()) * @select(
+                f32,
+                t2 < tfv,
+                @splat(3, @as(f32, 1)),
+                @splat(3, @as(f32, 0)),
+            );
+        }
+    };
+    return SurfaceHit{
+        .position = hit_pos,
+        .normal = Vec3.fromSimd(norm),
+    };
 }
 
 pub fn trace(self: *Tracer, ray: Ray) ![]Hit {
     const a = self.f_a.allocator();
     const pos = ray.origin;
-    const n_inv = @splat(3, @as(f32, 1)) / ray.direction.simd();
-    _ = n_inv;
+    const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
     var hits = std.ArrayList(Hit).init(a);
     for (self.boxes.items, 0..) |box, i| {
-        const box_pos = (box.min.simd() + box.max.simd()) / @splat(3, @as(f32, 2));
-        const ro = pos.simd() - box_pos;
-        _ = ro;
+        const hit = boxHit(ray.direction, n_inv, pos, box) orelse continue;
+        try hits.append(Hit{
+            .position = hit.position,
+            .normal = hit.normal,
+            .hit_index = @intCast(u32, i),
+        });
     }
     return hits.toOwnedSlice() catch |err| blk: {
         log.debug("Failed to convert to owned slice! Err: {}", .{err});
@@ -229,78 +283,102 @@ pub fn trace(self: *Tracer, ray: Ray) ![]Hit {
     };
 }
 
-fn traceX(comptime count: comptime_int, self: Tracer, origin: Vec3, n_inv: Vec3, direction: Vec3, boxes: []Box) []Hit {
-    const a = self.f_a.allocator();
-    const bs = @bitCast(@Vector(count * 6, f32), @ptrCast(*[count * 6]f32, boxes.ptr.*).*);
-    const n_inv_many = n_inv.simd() ** count;
-    const origin_many = origin.simd() ** count;
-    const t = (bs - origin_many) * n_inv_many;
-    const mask: @Vector(count * 3, i32) = comptime blk: {
-        var mask_bits: [count * 3]i32 = undefined;
-        inline for (0..count) |i| {
-            const k = i * 6;
-            mask_bits[i * 3 + 0] = k;
-            mask_bits[i * 3 + 1] = k + 1;
-            mask_bits[i * 3 + 2] = k + 2;
-        }
-        break :blk mask_bits;
-    };
-    const t1 = @shuffle(f32, t, undefined, mask);
-    const t2 = @shuffle(f32, t, undefined, mask + @splat(count * 3, @as(i3, 3)));
-    const min = @min(t1, t2);
-    const max = @max(t1, t2);
-    var hits = std.ArrayList(Hit).init(a);
-    for (0..count) |i| {
-        const tmin = @reduce(.Max, min[i * 3 .. (i + 1) * 3]);
-        const tmax = @reduce(.Min, max[i * 3 .. (i + 1) * 3]);
-        if (tmin < tmax and tmax >= 0) {
-            var hit_pos: Vec3 = undefined;
-            if (tmin < 0) {
-                hit_pos = direction.sMult(tmax);
-            } else {
-                hit_pos = direction.sMult(tmin);
-            }
-            hits.append(Hit{ .hit_index = @intCast(u32, i), .postion = hit_pos });
-        }
-    }
-    return hits.toOwnedSlice() catch |err| blk: {
-        log.err("Failed to convert to owned slice! Err: {}", .{err});
-        break :blk &.{};
-    };
-}
+//fn traceX(comptime count: comptime_int, self: Tracer, origin: Vec3, n_inv: Vec3, direction: Vec3, boxes: []Box) []Hit {
+//    const a = self.f_a.allocator();
+//    const bs = @bitCast(@Vector(count * 6, f32), @ptrCast(*[count * 6]f32, boxes.ptr.*).*);
+//    const n_inv_many = n_inv.simd() ** count;
+//    const origin_many = origin.simd() ** count;
+//    const t = (bs - origin_many) * n_inv_many;
+//    const mask: @Vector(count * 3, i32) = comptime blk: {
+//        var mask_bits: [count * 3]i32 = undefined;
+//        inline for (0..count) |i| {
+//            const k = i * 6;
+//            mask_bits[i * 3 + 0] = k;
+//            mask_bits[i * 3 + 1] = k + 1;
+//            mask_bits[i * 3 + 2] = k + 2;
+//        }
+//        break :blk mask_bits;
+//    };
+//    const t1 = @shuffle(f32, t, undefined, mask);
+//    const t2 = @shuffle(f32, t, undefined, mask + @splat(count * 3, @as(i3, 3)));
+//    const min = @min(t1, t2);
+//    const max = @max(t1, t2);
+//    var hits = std.ArrayList(Hit).init(a);
+//    for (0..count) |i| {
+//        const tmin = @reduce(.Max, min[i * 3 .. (i + 1) * 3]);
+//        const tmax = @reduce(.Min, max[i * 3 .. (i + 1) * 3]);
+//        if (tmin < tmax and tmax >= 0) {
+//            var hit_pos: Vec3 = undefined;
+//            if (tmin < 0) {
+//                hit_pos = direction.sMult(tmax);
+//            } else {
+//                hit_pos = direction.sMult(tmin);
+//            }
+//            hits.append(Hit{ .hit_index = @intCast(u32, i), .postion = hit_pos });
+//        }
+//    }
+//    return hits.toOwnedSlice() catch |err| blk: {
+//        log.err("Failed to convert to owned slice! Err: {}", .{err});
+//        break :blk &.{};
+//    };
+//}
 
-pub fn tester() void {
+pub fn tester() !void {
     if (@import("builtin").mode != .Debug) return;
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const a = gpa.allocator();
-    var tracer = Tracer.init(a) catch unreachable;
-    defer tracer.destroy();
 
-    tracer.addCube(
-        Vec3.fromData(.{ 0, 0, 1 }),
-        0.1,
-        Vec3.fromData(.{ 0.4, 0.4, 0.4 }),
-    );
-    //std.testing.expect(tracer.trace(Ray{
-    //    .origin = Vec3{ .x = 0, .y = 0, .z = 0 },
-    //    .direction = Vec3{ .x = 0, .y = 0, .z = 1 },
-    //}) != null) catch unreachable;
-    //std.testing.expect(tracer.trace(Ray{
-    //    .origin = Vec3{ .x = 1, .y = 0, .z = 1 },
-    //    .direction = Vec3{ .x = -1, .y = 0, .z = 0 },
-    //}) != null) catch unreachable;
-    //std.testing.expect(tracer.trace(Ray{
-    //    .origin = Vec3{ .x = 0, .y = 0, .z = 2 },
-    //    .direction = Vec3{ .x = 0, .y = 0, .z = -1 },
-    //}) != null) catch unreachable;
-    //std.testing.expect(tracer.trace(Ray{
-    //    .origin = Vec3{ .x = 0, .y = 0, .z = 0 },
-    //    .direction = Vec3{ .x = 0, .y = 1, .z = 0 },
-    //}) == null) catch unreachable;
-    //std.testing.expect(tracer.trace(Ray{
-    //    .origin = Vec3{ .x = 0, .y = 0, .z = 0 },
-    //    .direction = Vec3{ .x = 0, .y = 0.7, .z = 0.7 },
-    //}) == null) catch unreachable;
+    const box = Box{
+        .pos = .{ .x = 0, .y = 0, .z = 1 },
+        .size = .{ .x = 0.1, .y = 0.1, .z = 0.1 },
+    };
+    {
+        const ray = Ray{
+            .origin = Vec3{ .x = 1, .y = 0, .z = 1 },
+            .direction = Vec3{ .x = -1, .y = 0, .z = 0 },
+        };
+        const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
+        try std.testing.expect(
+            Tracer.boxHit(ray.direction, n_inv, ray.origin, box) != null,
+        );
+    }
+    {
+        const ray = Ray{
+            .origin = Vec3{ .x = 0, .y = 0, .z = 0 },
+            .direction = Vec3{ .x = 0, .y = 0, .z = 1 },
+        };
+        const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
+        try std.testing.expect(
+            Tracer.boxHit(ray.direction, n_inv, ray.origin, box) != null,
+        );
+    }
+    {
+        const ray = Ray{
+            .origin = Vec3{ .x = 0, .y = 0, .z = 2 },
+            .direction = Vec3{ .x = 0, .y = 0, .z = -1 },
+        };
+        const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
+        try std.testing.expect(
+            Tracer.boxHit(ray.direction, n_inv, ray.origin, box) != null,
+        );
+    }
+    {
+        const ray = Ray{
+            .origin = Vec3{ .x = 0, .y = 0, .z = 0 },
+            .direction = Vec3{ .x = 0, .y = 1, .z = 0 },
+        };
+        const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
+        try std.testing.expect(
+            Tracer.boxHit(ray.direction, n_inv, ray.origin, box) == null,
+        );
+    }
+    {
+        const ray = Ray{
+            .origin = Vec3{ .x = 0, .y = 0, .z = 0 },
+            .direction = Vec3{ .x = 0, .y = 0.7, .z = 0.7 },
+        };
+        const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
+        try std.testing.expect(
+            Tracer.boxHit(ray.direction, n_inv, ray.origin, box) == null,
+        );
+    }
     log.debug("Tests passed!", .{});
 }

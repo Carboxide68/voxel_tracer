@@ -23,7 +23,7 @@ pub fn main() !void {
     var tracer = try Tracer.init(gpa.allocator());
     defer tracer.destroy();
 
-    Tracer.tester();
+    try Tracer.tester();
     tracer.addCube(
         .{ .x = 0, .y = 0, .z = 3 },
         0.1,
