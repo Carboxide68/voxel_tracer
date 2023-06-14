@@ -11,8 +11,8 @@ uniform uint u_y_size;
 void main() {
 	float smallest = float(min(u_x_size, u_y_size));
 	gl_Position = vec4(
-		in_Pos.x * smallest/float(u_x_size),
-		in_Pos.y * smallest/float(u_y_size),
+		in_Pos.x,
+		in_Pos.y,
 		1, 1
 	);
 	frag_coord = in_Pos;
@@ -36,7 +36,7 @@ out vec4 Color;
 void main() {
 	uint x_index = uint(mix(0, float(u_x_size), (frag_coord.x + 1)/2));
 	uint y_index = uint(mix(0, float(u_y_size), (frag_coord.y + 1)/2));
-	Color = buffer_texture.pixel[x_index + y_index * u_x_size]/float(u_sample_count);
+	Color = sqrt(buffer_texture.pixel[x_index + y_index * u_x_size]/float(u_sample_count));
 }
 
 @end

@@ -56,6 +56,11 @@ pub const Timings = struct {
     pub var trace_scene: i128 = 0;
 };
 
+pub const Material = struct {
+    color: Vec3,
+    scatter_variance: f32 = 0.01,
+};
+
 var _rand_proto = std.rand.DefaultPrng.init(11);
 const rnd = _rand_proto.random();
 
@@ -64,7 +69,7 @@ f_a: std.heap.ArenaAllocator,
 rand: std.rand.DefaultPrng,
 
 boxes: std.ArrayList(Box),
-colors: std.ArrayList(Vec3),
+materials: std.ArrayList(Material),
 
 camera: Camera,
 
@@ -77,13 +82,15 @@ frame: [2]u32,
 pixels: []Vec4,
 samples: u32,
 variance: f32,
-clear_color: Vec4,
+clear_color: Vec3,
+
+max_depth: u32,
 
 pub fn init(a: std.mem.Allocator) !Tracer {
     const seed: u64 = if (is_debug) 7 else @intCast(u64, std.time.milliTimestamp());
     var self: Tracer = undefined;
     self.boxes = std.ArrayList(Box).init(a);
-    self.colors = std.ArrayList(Vec3).init(a);
+    self.materials = std.ArrayList(Material).init(a);
     self.vao = VertexArray.init();
     self.vertex_buffer = Buffer.init(@sizeOf(f32) * 12, .static_draw);
     try self.vertex_buffer.subData(
@@ -101,20 +108,21 @@ pub fn init(a: std.mem.Allocator) !Tracer {
     self.a = a;
     self.f_a = std.heap.ArenaAllocator.init(self.a);
     self.rand = std.rand.DefaultPrng.init(seed);
-    self.clear_color = Vec4.fromData(.{ 0.5, 0.5, 0, 0 });
+    self.clear_color = Vec3.fromData(.{ 1, 1, 1 });
     self.samples = 0;
     self.variance = 0.001;
     self.camera = Camera.init(
         Vec3.fromData(.{ 0, 0, 0 }),
         Vec3.fromData(.{ 0, 0, 1 }),
-        [2]f32{ 60, 60 },
+        null,
     );
+    self.max_depth = 1;
     return self;
 }
 
 pub fn destroy(self: *Tracer) void {
     self.boxes.deinit();
-    self.colors.deinit();
+    self.materials.deinit();
     self.drawer.destroy();
     self.vao.destroy();
     self.vertex_buffer.destroy();
@@ -123,17 +131,41 @@ pub fn destroy(self: *Tracer) void {
     self.f_a.deinit();
 }
 
-pub fn addCube(self: *Tracer, pos: Vec3, s: FPrec, color: Vec3) void {
+pub fn resize(self: *Tracer, h: u32, w: u32) void {
+    self.clearImage();
+    self.pixels = self.a.realloc(self.pixels, h * w) catch |err| {
+        log.err("Failed to reallocate screen buffer! Err: {}", .{err});
+        return;
+    };
+    self.frame[0] = h;
+    self.frame[1] = w;
+    self.image_buffer.realloc(h * w * 16, .dynamic_draw);
+}
+
+pub fn addCube(self: *Tracer, pos: Vec3, s: FPrec, material: Material) void {
     self.boxes.append(Box{
         .pos = pos,
         .size = Vec3.fromSimd(@splat(3, s)),
     }) catch |err| log.err("Failed to add to array! Error: {}", .{err});
-    self.colors.append(color) catch |err| log.err("Failed to add to array! Error: {}", .{err});
+    self.materials.append(material) catch |err| log.err("Failed to add to array! Error: {}", .{err});
 }
 
 pub fn addBox(self: *Tracer, box: Box, color: Vec3) void {
     self.boxes.append(box) catch |err| log.err("Failed to add to array! Error: {}", .{err});
     self.colors.append(color) catch |err| log.err("Failed to add to array! Error: {}", .{err});
+}
+
+fn colorEval(self: Tracer, hits: []Hit, rays: []Ray) Vec4 {
+    const FALLOFF = 0.5;
+    const y_val = std.math.pow(f32, rays[rays.len - 1].direction.y, 2);
+    var color = Vec3.init(1).sMult(1 - y_val).add((Vec3{ .x = 0.5, .y = 0.5, .z = 1 }).sMult(y_val));
+    for (0..hits.len) |i| {
+        const hit = hits[hits.len - i - 1];
+        const mat = self.materials.items[hit.hit_index];
+        color = color.add(mat.color);
+        color = color.sMult(FALLOFF);
+    }
+    return Vec4.fromData(.{ color.x, color.y, color.z, 1 });
 }
 
 pub fn traceScene(self: *Tracer) void {
@@ -144,40 +176,60 @@ pub fn traceScene(self: *Tracer) void {
     const h = @intToFloat(f32, self.frame[1]);
     for (0..self.frame[1]) |i| {
         for (self.pixels[self.frame[0] * i .. self.frame[0] * (i + 1)], 0..) |*pixel, k| {
+            var bounces = std.ArrayList(Hit).init(self.f_a.allocator());
+            var rays = std.ArrayList(Ray).init(self.f_a.allocator());
+            const min = @min(w, h);
             const rel_pos = [2]f32{
-                2 * @intToFloat(f32, k) / w - 1,
-                2 * @intToFloat(f32, i) / h - 1,
+                2 * @intToFloat(f32, k) / min - 1,
+                2 * @intToFloat(f32, i) / min - 1,
             };
-            const hit = self.trace(self.camera.castRayVar(rel_pos, self.variance, self.rand.random())) catch |err| {
-                if (!is_debug) {
-                    unreachable;
-                }
-                log.err("Failed to allocate memory in arena buffer!\nErr: {}", .{err});
-                continue;
-            };
-            if (hit.len != 0) {
-                const color = self.colors.items[hit[0].hit_index];
-                _ = color;
-                //const true_color = Vec4{ .x = color.x, .y = color.y, .z = color.z, .w = 1 };
-                const true_color = Vec4{ .x = @fabs(hit[0].normal.x), .y = @fabs(hit[0].normal.y), .z = @fabs(hit[0].normal.z), .w = 1 };
-                log.info("Color: {}", .{true_color});
-                if (self.samples == 1) {
-                    pixel.* = true_color;
-                } else {
-                    pixel.* = pixel.add(true_color);
-                }
-            } else {
-                if (self.samples == 1) {
-                    pixel.* = self.clear_color;
-                } else {
-                    pixel.* = pixel.add(self.clear_color);
-                }
+            var r = self.camera.castRayVar(rel_pos, self.variance, self.rand.random());
+            rays.append(r) catch unreachable;
+
+            for (0..self.max_depth) |_| {
+                var hits = self.trace(r);
+                if (hits.len == 0) break;
+                const hit = blk: {
+                    var closest = std.math.inf(f32);
+                    var index: u32 = 0;
+                    for (hits, 0..) |hit, j| {
+                        const new_length = hit.position.sub(self.camera.position).length2();
+                        if (new_length < closest) {
+                            index = @intCast(u32, j);
+                            closest = new_length;
+                        }
+                    }
+                    break :blk hits[index];
+                };
+                bounces.append(hit) catch |err| {
+                    if (!is_debug) {
+                        unreachable;
+                    }
+                    log.err("Failed to allocate memory in arena buffer!\nErr: {}", .{err});
+                    return;
+                };
+
+                var new_dir = hit.normal.sMult(-2 * r.direction.normalize().dot(hit.normal));
+                const mat = self.materials.items[hit.hit_index];
+                new_dir = r.direction.add(new_dir);
+                new_dir = Camera.varyRay(
+                    new_dir,
+                    mat.scatter_variance,
+                    self.rand.random(),
+                );
+                r = Ray{
+                    .origin = hit.position.add(new_dir.sMult(0.005)),
+                    .direction = new_dir,
+                };
+                rays.append(r) catch unreachable;
             }
+            pixel.* = pixel.add(self.colorEval(bounces.items, rays.items));
+            bounces.deinit();
+            rays.deinit();
         }
     }
     Timings.trace_scene = std.time.nanoTimestamp() - fun_begin;
 
-    log.info("Trace Scene took {}ms!", .{@divFloor(Timings.trace_scene, 1000)});
     self.image_buffer.subData(
         0,
         @sizeOf(Vec4) * self.frame[0] * self.frame[1],
@@ -193,7 +245,7 @@ pub fn traceScene(self: *Tracer) void {
 
 pub fn clearImage(self: *Tracer) void {
     self.samples = 0;
-    for (self.pixels) |*pixel| pixel.* = self.clear_color;
+    for (self.pixels) |*pixel| pixel.* = Vec4.init(0);
     self.image_buffer.subData(
         0,
         @sizeOf(Vec4) * self.frame[0] * self.frame[1],
@@ -215,7 +267,7 @@ pub fn draw(self: *Tracer) void {
     self.vao.drawArrays(.triangles, 0, 6);
 }
 
-pub inline fn aabbHit(n_inv: Vec3, ray_origin: Vec3, aabb: AABB) bool {
+pub inline fn hitsAABB(n_inv: Vec3, ray_origin: Vec3, aabb: AABB) bool {
     const t1 = (aabb.min.simd() - ray_origin.simd()) * n_inv.simd();
     const t2 = (aabb.max.simd() - ray_origin.simd()) * n_inv.simd();
     const min = @min(t1, t2);
@@ -226,56 +278,58 @@ pub inline fn aabbHit(n_inv: Vec3, ray_origin: Vec3, aabb: AABB) bool {
 }
 
 pub fn boxHit(ray_d: Vec3, n_inv: Vec3, pos: Vec3, box: Box) ?SurfaceHit {
-    const m = n_inv.simd();
     const ro = pos.simd() - box.pos.simd();
+    const m = n_inv.simd();
     const n = ro * m;
     const k = box.size.simd() * @fabs(m);
     const t1 = -k - n;
     const t2 = k - n;
     const tn = @reduce(.Max, t1);
     const tf = @reduce(.Min, t2);
-    log.debug("tN: {}, tF: {}", .{ tn, tf });
     if (tn > tf or tf < 0) return null;
     var hit_pos: Vec3 = undefined;
     const norm = blk: {
         if (tn > 0) {
-            const tnv = @splat(3, tn);
             hit_pos = ray_d.sMult(tn);
+            const tnv = @splat(3, tn);
             break :blk -std.math.sign(ray_d.simd()) * @select(
                 f32,
-                tnv < t1,
-                @splat(3, @as(f32, 1)),
+                t1 < tnv,
                 @splat(3, @as(f32, 0)),
+                @splat(3, @as(f32, 1)),
             );
         } else {
-            const tfv = @splat(3, tf);
             hit_pos = ray_d.sMult(tf);
+            const tfv = @splat(3, tf);
             break :blk -std.math.sign(ray_d.simd()) * @select(
                 f32,
-                t2 < tfv,
-                @splat(3, @as(f32, 1)),
+                tfv < t2,
                 @splat(3, @as(f32, 0)),
+                @splat(3, @as(f32, 1)),
             );
         }
     };
     return SurfaceHit{
-        .position = hit_pos,
+        .position = hit_pos.add(pos),
         .normal = Vec3.fromSimd(norm),
     };
 }
 
-pub fn trace(self: *Tracer, ray: Ray) ![]Hit {
+pub fn trace(self: *Tracer, ray: Ray) []Hit {
     const a = self.f_a.allocator();
     const pos = ray.origin;
     const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
     var hits = std.ArrayList(Hit).init(a);
     for (self.boxes.items, 0..) |box, i| {
         const hit = boxHit(ray.direction, n_inv, pos, box) orelse continue;
-        try hits.append(Hit{
+        hits.append(Hit{
             .position = hit.position,
             .normal = hit.normal,
             .hit_index = @intCast(u32, i),
-        });
+        }) catch |err| {
+            log.err("Failed to add to buffer in trace! Err: {}", .{err});
+            return &.{};
+        };
     }
     return hits.toOwnedSlice() catch |err| blk: {
         log.debug("Failed to convert to owned slice! Err: {}", .{err});

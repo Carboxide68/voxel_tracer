@@ -10,23 +10,15 @@ pub fn vecProto(comptime T: type, comptime S: type, comptime dims: comptime_int)
         const SimdType = @Vector(dims, S);
 
         pub inline fn init(v: S) T {
-            return fromData([_]S{v} ** dims);
+            return .{ .d = [_]S{v} ** dims };
         }
 
         pub inline fn simd(this: T) SimdType {
-            return @as(SimdType, @bitCast(DataType, this));
-        }
-
-        pub inline fn data(this: T) DataType {
-            return @bitCast(DataType, this);
-        }
-
-        pub inline fn fromData(d: DataType) T {
-            return @bitCast(T, d);
+            return @as(SimdType, this.d);
         }
 
         pub inline fn fromSimd(val: @Vector(dims, S)) T {
-            return @bitCast(T, @as(DataType, val));
+            return T{ .d = @as(DataType, val) };
         }
 
         pub inline fn add(this: T, other: T) T {
@@ -64,6 +56,48 @@ pub fn vecProto(comptime T: type, comptime S: type, comptime dims: comptime_int)
         pub inline fn length2(this: T) S {
             return dot(this, this);
         }
+
+        pub inline fn normalize(this: T) T {
+            return this.sMult(1 / this.length());
+        }
+
+        pub inline fn x(this: T) S {
+            return this.d[0];
+        }
+
+        pub inline fn y(this: T) if (dims < 2) void else S {
+            if (dims < 2) return;
+            return this.d[1];
+        }
+
+        pub inline fn z(this: T) if (dims < 3) void else S {
+            if (dims < 3) return;
+            return this.d[2];
+        }
+
+        pub inline fn w(this: T) if (dims < 4) void else S {
+            if (dims < 4) return;
+            return this.d[3];
+        }
+
+        pub inline fn r(this: T) S {
+            return this.d[0];
+        }
+
+        pub inline fn g(this: T) if (dims < 2) void else S {
+            if (dims < 2) return;
+            return this.d[1];
+        }
+
+        pub inline fn b(this: T) if (dims < 3) void else S {
+            if (dims < 3) return;
+            return this.d[2];
+        }
+
+        pub inline fn a(this: T) if (dims < 4) void else S {
+            if (dims < 4) return;
+            return this.d[3];
+        }
     };
 }
 
@@ -72,8 +106,7 @@ pub fn Vec2T(comptime T: type) type {
         const proto = vecProto(@This(), T, 2);
         pub usingnamespace proto;
 
-        x: T,
-        y: T,
+        d: [2]T,
     };
 }
 
@@ -82,15 +115,19 @@ pub fn Vec3T(comptime T: type) type {
         const proto = vecProto(@This(), T, 3);
         pub usingnamespace proto;
 
-        x: T,
-        y: T,
-        z: T,
+        d: [3]T,
 
         pub inline fn cross(this: @This(), other: @This()) @This() {
+            const tx = this.x();
+            const ty = this.y();
+            const tz = this.z();
+            const ox = other.x();
+            const oy = other.y();
+            const oz = other.z();
             return .{
-                .x = this.y * other.z - this.z * other.y,
-                .y = this.z * other.x - this.x * other.z,
-                .z = this.x * other.y - this.y * other.x,
+                .x = ty * oz - tz * oy,
+                .y = tz * ox - tx * oz,
+                .z = tx * oy - ty * ox,
             };
         }
     };
@@ -101,10 +138,7 @@ pub fn Vec4T(comptime T: type) type {
         const proto = vecProto(@This(), T, 4);
         pub usingnamespace proto;
 
-        x: T,
-        y: T,
-        z: T,
-        w: T,
+        d: [4]T,
     };
 }
 
