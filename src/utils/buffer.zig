@@ -11,7 +11,7 @@ pub const BufferTarget = enum(GLENUM) {
 
     _,
     pub fn u(self: BufferTarget) GLENUM {
-        return @enumToInt(self);
+        return @intFromEnum(self);
     }
 };
 
@@ -30,7 +30,7 @@ pub const BufferUsage = enum(GLENUM) {
 
     _,
     pub fn u(self: BufferUsage) GLENUM {
-        return @enumToInt(self);
+        return @intFromEnum(self);
     }
 };
 
@@ -48,7 +48,7 @@ pub const GLType = enum(GLENUM) {
     _,
 
     pub fn u(self: GLType) GLENUM {
-        return @enumToInt(self);
+        return @intFromEnum(self);
     }
 };
 
@@ -68,7 +68,7 @@ pub const DrawMode = enum(GLENUM) {
     _,
 
     pub fn u(self: DrawMode) GLENUM {
-        return @enumToInt(self);
+        return @intFromEnum(self);
     }
 };
 
@@ -83,7 +83,7 @@ pub const Buffer = struct {
         if (size != 0)
             c.glNamedBufferData(
                 handle,
-                @bitCast(i64, size),
+                @bitCast(size),
                 null,
                 usage.u(),
             );
@@ -99,7 +99,7 @@ pub const Buffer = struct {
         if (size <= self.size and usage == self.usage) return;
         c.glNamedBufferData(
             self._buffer_handle,
-            @intCast(i64, size),
+            @as(i64, @intCast(size)),
             null,
             usage.u(),
         );
@@ -111,20 +111,20 @@ pub const Buffer = struct {
         if (offset + size > self.size) return error.InvalidAccess;
         c.glNamedBufferSubData(
             self._buffer_handle,
-            @bitCast(i64, offset),
-            @bitCast(i64, size),
-            @ptrCast(*const anyopaque, &data[0]),
+            @as(i64, @bitCast(offset)),
+            @as(i64, @bitCast(size)),
+            @as(*const anyopaque, @ptrCast(&data[0])),
         );
     }
 
     ///Reads `size` data from the GPU to a preallocated bytearray `out`.
     pub fn read(self: Buffer, offset: usize, size: usize, out: [*]u8) !void {
-        if (@intCast(u64, offset) + @intCast(u64, size) > self.size) return error.InvalidAccess;
+        if (@as(u64, @intCast(offset)) + @as(u64, @intCast(size)) > self.size) return error.InvalidAccess;
         c.glGetNamedBufferSubData(
             self._buffer_handle,
-            @intCast(c_longlong, offset),
-            @intCast(isize, size),
-            @ptrCast([*c]anyopaque, out),
+            @as(c_longlong, @intCast(offset)),
+            @as(isize, @intCast(size)),
+            @as([*c]anyopaque, @ptrCast(out)),
         );
     }
 
@@ -132,25 +132,25 @@ pub const Buffer = struct {
 
     ///Reads `size` data from the GPU to a preallocated pointer `out` with the type `[*]T`.
     pub fn readT(self: Buffer, T: type, offset: usize, size: usize, out: [*]T) !void {
-        if (@intCast(u64, offset) + @intCast(u64, size) > self.size) return error.InvalidAccess;
+        if (@as(u64, @intCast(offset)) + @as(u64, @intCast(size)) > self.size) return error.InvalidAccess;
         if (size % @sizeOf(T) != 0) return NotAligned;
         c.glGetNamedBufferSubData(
             self._buffer_handle,
-            @intCast(c_longlong, offset),
-            @intCast(isize, size),
-            @ptrCast([*c]anyopaque, out),
+            @as(c_longlong, @intCast(offset)),
+            @as(isize, @intCast(size)),
+            @as([*c]anyopaque, @ptrCast(out)),
         );
     }
 
     ///Binds a continuous subset of the buffer to `target` at `index`.
     pub fn bindRange(self: Buffer, target: BufferTarget, index: usize, offset: usize, size: usize) !void {
-        if (@intCast(u64, offset) + @intCast(u64, size) > self.size) return error.InvalidAccess;
+        if (@as(u64, @intCast(offset)) + @as(u64, @intCast(size)) > self.size) return error.InvalidAccess;
         c.glBindBufferRange(
             target.u(),
-            @intCast(u32, index),
+            @as(u32, @intCast(index)),
             self._buffer_handle,
-            @intCast(isize, offset),
-            @intCast(isize, size),
+            @as(isize, @intCast(offset)),
+            @as(isize, @intCast(size)),
         );
     }
 
@@ -166,7 +166,7 @@ pub const Buffer = struct {
 
     ///Creates a `BufferDescriptor` of the current buffer.
     pub fn range(self: *Buffer, start: usize, size: usize) !BufferDescriptor {
-        if (@intCast(u64, start) + @intCast(u64, size) > self.size) return error.InvalidAccess;
+        if (@as(u64, @intCast(start)) + @as(u64, @intCast(size)) > self.size) return error.InvalidAccess;
         return BufferDescriptor{
             .buffer = self,
             .start = start,
@@ -176,29 +176,29 @@ pub const Buffer = struct {
 
     ///Clears the buffer, replaces everything with zeros.
     pub fn clear(self: *Buffer, offset: usize, size: usize) !void {
-        if (@intCast(u64, offset) + @intCast(u64, size) > self.size) return error.InvalidAccess;
+        if (@as(u64, @intCast(offset)) + @as(u64, @intCast(size)) > self.size) return error.InvalidAccess;
         const data = @as(u256, 0);
         c.glClearNamedBufferSubData(
             self._buffer_handle,
             c.GL_RGBA8,
-            @intCast(c_longlong, offset),
-            @intCast(isize, size),
+            @as(c_longlong, @intCast(offset)),
+            @as(isize, @intCast(size)),
             c.GL_RGBA,
             c.GL_UNSIGNED_BYTE,
-            @ptrCast(*const anyopaque, &data),
+            @as(*const anyopaque, @ptrCast(&data)),
         );
     }
 
     ///Copies from `other` to `self`.
     pub fn copy(self: *Buffer, other: Buffer, offset_read: usize, offset_write: usize, size: usize) !void {
-        if (@intCast(u64, offset_read) + @intCast(u64, size) > other.size) return error.InvalidAccess;
-        if (@intCast(u64, offset_write) + @intCast(u64, size) > self.size) return error.InvalidAccess;
+        if (@as(u64, @intCast(offset_read)) + @as(u64, @intCast(size)) > other.size) return error.InvalidAccess;
+        if (@as(u64, @intCast(offset_write)) + @as(u64, @intCast(size)) > self.size) return error.InvalidAccess;
         c.glCopyNamedBufferSubData(
             other._buffer_handle,
             self._buffer_handle,
-            @intCast(c_long, offset_read),
-            @intCast(c_long, offset_write),
-            @intCast(c_long, size),
+            @as(c_long, @intCast(offset_read)),
+            @as(c_long, @intCast(offset_write)),
+            @as(c_long, @intCast(size)),
         );
     }
 };
@@ -248,9 +248,9 @@ pub const VertexArray = struct {
         self.bind();
         c.glDrawElements(
             mode.u(),
-            @bitCast(i64, count),
+            @as(i64, @bitCast(count)),
             index_type.u(),
-            @bitCast([*c]anyopaque, offset),
+            @as([*c]anyopaque, @bitCast(offset)),
         );
     }
 
@@ -258,9 +258,9 @@ pub const VertexArray = struct {
         self.bind();
         c.glDrawElementsInstanced(
             mode.u(),
-            @bitCast(i64, count),
+            @as(i64, @bitCast(count)),
             index_type.u(),
-            @bitCast([*c]anyopaque, offset),
+            @as([*c]anyopaque, @bitCast(offset)),
             instance_count,
         );
     }
@@ -269,8 +269,8 @@ pub const VertexArray = struct {
         self.bind();
         c.glDrawArrays(
             mode.u(),
-            @bitCast(i32, offset),
-            @bitCast(i32, count),
+            @as(i32, @bitCast(offset)),
+            @as(i32, @bitCast(count)),
         );
     }
 
@@ -278,9 +278,9 @@ pub const VertexArray = struct {
         self.bind();
         c.glDrawArraysInstanced(
             mode.u(),
-            @bitCast(i32, offset),
-            @bitCast(i32, count),
-            @bitCast(i32, instance_count),
+            @as(i32, @bitCast(offset)),
+            @as(i32, @bitCast(count)),
+            @as(i32, @bitCast(instance_count)),
         );
     }
 
@@ -290,8 +290,8 @@ pub const VertexArray = struct {
             self._handle,
             vb_index,
             buffer._buffer_handle,
-            @bitCast(i64, offset),
-            @bitCast(i32, stride),
+            @as(i64, @bitCast(offset)),
+            @as(i32, @bitCast(stride)),
         );
     }
 
@@ -308,7 +308,7 @@ pub const VertexArray = struct {
         c.glVertexArrayAttribFormat(
             self._handle,
             attr_index,
-            @bitCast(i32, count),
+            @as(i32, @bitCast(count)),
             t.u(),
             c.GL_FALSE,
             vertex_offset,

@@ -6,10 +6,10 @@ const math = std.math;
 const Camera = @This();
 const DEG_TO_GRAD = math.pi / 180.0;
 
-position: Vec3 = Vec3{ .x = 0, .y = 0, .z = 0 },
-fwd: Vec3 = .{ .x = 0, .y = 0, .z = 1 },
-up: Vec3 = .{ .x = 0, .y = 1, .z = 0 },
-side: Vec3 = .{ .x = -1, .y = 0, .z = 0 },
+position: Vec3 = Vec3{ .d = .{ 0, 0, 0 } },
+fwd: Vec3 = .{ .d = .{ 0, 0, 1 } },
+up: Vec3 = .{ .d = .{ 0, 1, 0 } },
+side: Vec3 = .{ .d = .{ -1, 0, 0 } },
 
 dof: f32 = 0.3,
 
@@ -34,7 +34,7 @@ pub fn lookAt(self: *Camera, point: Vec3) void {
 
 ///`dir` should be normalized
 pub fn updateCameraMatrix(self: *Camera, dir: Vec3) void {
-    const UP = Vec3.fromData(.{ 0, 1, 0 });
+    const UP = Vec3{ .d = .{ 0, 1, 0 } };
     self.side = dir.cross(UP).normalize();
     self.up = self.side.cross(dir);
     self.fwd = dir;
@@ -44,12 +44,10 @@ pub fn updateCameraMatrix(self: *Camera, dir: Vec3) void {
 pub fn castRay(self: Camera, location: [2]f32) Ray {
     const l = [2]f32{ location[0] / 2, location[1] / 2 };
     const rel_dir = (Vec3{
-        .x = self.dof,
-        .y = l[1],
-        .z = l[0],
+        .d = .{ self.dof, l[1], l[0] },
     }).normalize();
     const dir = Vec3.fromSimd(
-        self.fwd.sMult(rel_dir.x).simd() + self.up.sMult(rel_dir.y).simd() + self.side.sMult(rel_dir.z).simd(),
+        self.fwd.sMult(rel_dir.x()).simd() + self.up.sMult(rel_dir.y()).simd() + self.side.sMult(rel_dir.z()).simd(),
     );
     return .{
         .direction = dir,
@@ -60,9 +58,9 @@ pub fn castRay(self: Camera, location: [2]f32) Ray {
 pub fn varyRay(dir: Vec3, variance: f32, rnd: std.rand.Random) Vec3 {
     var r: Vec3 = undefined;
     while (true) {
-        r.x = rnd.float(f32);
-        r.y = rnd.float(f32);
-        r.z = rnd.float(f32);
+        r.d[0] = rnd.float(f32);
+        r.d[1] = rnd.float(f32);
+        r.d[2] = rnd.float(f32);
         if (r.length2() <= 1) break;
     }
     r = r.normalize();

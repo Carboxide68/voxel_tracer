@@ -1,7 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.coxel);
 const c = @import("c.zig");
-const glfw = @import("glfw");
+const glfw = @import("mach-glfw");
 const Window = glfw.Window;
 const gl = @import("gl.zig");
 
@@ -39,7 +39,7 @@ pub fn init() !Renderer {
     };
 
     if (!c.ImGui_ImplGlfw_InitForOpenGL(
-        @ptrCast(*c.GLFWwindow, self.window.handle),
+        @as(*c.GLFWwindow, @ptrCast(self.window.handle)),
         true,
     )) {
         log.err("Could not initialize ImGui!", .{});

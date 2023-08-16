@@ -26,7 +26,7 @@ pub fn vecProto(comptime T: type, comptime S: type, comptime dims: comptime_int)
         }
 
         pub inline fn sAdd(this: T, other: S) T {
-            return fromSimd(simd(this) + @splat(dims, other));
+            return fromSimd(simd(this) + @as(SimdType, @splat(other)));
         }
 
         pub inline fn mult(this: T, other: T) T {
@@ -34,7 +34,7 @@ pub fn vecProto(comptime T: type, comptime S: type, comptime dims: comptime_int)
         }
 
         pub inline fn sMult(this: T, other: S) T {
-            return fromSimd(simd(this) * @splat(dims, other));
+            return fromSimd(simd(this) * @as(SimdType, @splat(other)));
         }
 
         pub inline fn sub(this: T, other: T) T {
@@ -42,7 +42,7 @@ pub fn vecProto(comptime T: type, comptime S: type, comptime dims: comptime_int)
         }
 
         pub inline fn sSub(this: T, other: S) T {
-            return fromSimd(simd(this) - @splat(dims, other));
+            return fromSimd(simd(this) - @as(SimdType, @splat(other)));
         }
 
         pub inline fn dot(this: T, other: T) S {
@@ -66,38 +66,24 @@ pub fn vecProto(comptime T: type, comptime S: type, comptime dims: comptime_int)
         }
 
         pub inline fn y(this: T) if (dims < 2) void else S {
-            if (dims < 2) return;
+            comptime if (dims < 2) return;
             return this.d[1];
         }
 
         pub inline fn z(this: T) if (dims < 3) void else S {
-            if (dims < 3) return;
+            comptime if (dims < 3) return;
             return this.d[2];
         }
 
         pub inline fn w(this: T) if (dims < 4) void else S {
-            if (dims < 4) return;
+            comptime if (dims < 4) return;
             return this.d[3];
         }
 
-        pub inline fn r(this: T) S {
-            return this.d[0];
-        }
-
-        pub inline fn g(this: T) if (dims < 2) void else S {
-            if (dims < 2) return;
-            return this.d[1];
-        }
-
-        pub inline fn b(this: T) if (dims < 3) void else S {
-            if (dims < 3) return;
-            return this.d[2];
-        }
-
-        pub inline fn a(this: T) if (dims < 4) void else S {
-            if (dims < 4) return;
-            return this.d[3];
-        }
+        pub const r = x;
+        pub const g = y;
+        pub const b = z;
+        pub const a = w;
     };
 }
 
@@ -124,11 +110,11 @@ pub fn Vec3T(comptime T: type) type {
             const ox = other.x();
             const oy = other.y();
             const oz = other.z();
-            return .{
-                .x = ty * oz - tz * oy,
-                .y = tz * ox - tx * oz,
-                .z = tx * oy - ty * ox,
-            };
+            return .{ .d = .{
+                ty * oz - tz * oy,
+                tz * ox - tx * oz,
+                tx * oy - ty * ox,
+            } };
         }
     };
 }

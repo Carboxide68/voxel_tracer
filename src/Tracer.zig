@@ -35,8 +35,10 @@ pub const AABB = extern struct {
     max: Vec3,
 
     pub fn toBox(self: AABB) Box {
-        const size = (self.max.simd() - self.min.simd()) / @splat(3, @as(f32, 2));
-        const center = (self.max.simd() + self.min.simd()) / @splat(3, @as(f32, 2));
+        const size = (self.max.simd() - self.min.simd()) /
+            @as(@Vector(3, f32), @splat(2));
+        const center = (self.max.simd() + self.min.simd()) /
+            @as(@Vector(3, f32), @splat(2));
         return .{ .pos = center, .size = size };
     }
 };
@@ -87,7 +89,7 @@ clear_color: Vec3,
 max_depth: u32,
 
 pub fn init(a: std.mem.Allocator) !Tracer {
-    const seed: u64 = if (is_debug) 7 else @intCast(u64, std.time.milliTimestamp());
+    const seed: u64 = if (is_debug) 7 else @as(u64, @intCast(std.time.milliTimestamp()));
     var self: Tracer = undefined;
     self.boxes = std.ArrayList(Box).init(a);
     self.materials = std.ArrayList(Material).init(a);
@@ -108,12 +110,12 @@ pub fn init(a: std.mem.Allocator) !Tracer {
     self.a = a;
     self.f_a = std.heap.ArenaAllocator.init(self.a);
     self.rand = std.rand.DefaultPrng.init(seed);
-    self.clear_color = Vec3.fromData(.{ 1, 1, 1 });
+    self.clear_color = Vec3{ .d = .{ 1, 1, 1 } };
     self.samples = 0;
     self.variance = 0.001;
     self.camera = Camera.init(
-        Vec3.fromData(.{ 0, 0, 0 }),
-        Vec3.fromData(.{ 0, 0, 1 }),
+        Vec3{ .d = .{ 0, 0, 0 } },
+        Vec3{ .d = .{ 0, 0, 1 } },
         null,
     );
     self.max_depth = 1;
@@ -145,7 +147,7 @@ pub fn resize(self: *Tracer, h: u32, w: u32) void {
 pub fn addCube(self: *Tracer, pos: Vec3, s: FPrec, material: Material) void {
     self.boxes.append(Box{
         .pos = pos,
-        .size = Vec3.fromSimd(@splat(3, s)),
+        .size = Vec3.fromSimd(@splat(s)),
     }) catch |err| log.err("Failed to add to array! Error: {}", .{err});
     self.materials.append(material) catch |err| log.err("Failed to add to array! Error: {}", .{err});
 }
@@ -157,31 +159,31 @@ pub fn addBox(self: *Tracer, box: Box, color: Vec3) void {
 
 fn colorEval(self: Tracer, hits: []Hit, rays: []Ray) Vec4 {
     const FALLOFF = 0.5;
-    const y_val = std.math.pow(f32, rays[rays.len - 1].direction.y, 2);
-    var color = Vec3.init(1).sMult(1 - y_val).add((Vec3{ .x = 0.5, .y = 0.5, .z = 1 }).sMult(y_val));
+    const y_val = std.math.pow(f32, rays[rays.len - 1].direction.y(), 2);
+    var color = Vec3.init(1).sMult(1 - y_val).add((Vec3{ .d = .{ 0.5, 0.5, 1 } }).sMult(y_val));
     for (0..hits.len) |i| {
         const hit = hits[hits.len - i - 1];
         const mat = self.materials.items[hit.hit_index];
         color = color.add(mat.color);
         color = color.sMult(FALLOFF);
     }
-    return Vec4.fromData(.{ color.x, color.y, color.z, 1 });
+    return Vec4{ .d = .{ color.d[0], color.d[1], color.d[2], 1 } };
 }
 
 pub fn traceScene(self: *Tracer) void {
     const fun_begin = std.time.nanoTimestamp();
     self.samples += 1;
 
-    const w = @intToFloat(f32, self.frame[0]);
-    const h = @intToFloat(f32, self.frame[1]);
+    const w = @as(f32, @floatFromInt(self.frame[0]));
+    const h = @as(f32, @floatFromInt(self.frame[1]));
     for (0..self.frame[1]) |i| {
         for (self.pixels[self.frame[0] * i .. self.frame[0] * (i + 1)], 0..) |*pixel, k| {
             var bounces = std.ArrayList(Hit).init(self.f_a.allocator());
             var rays = std.ArrayList(Ray).init(self.f_a.allocator());
             const min = @min(w, h);
             const rel_pos = [2]f32{
-                2 * @intToFloat(f32, k) / min - 1,
-                2 * @intToFloat(f32, i) / min - 1,
+                2 * @as(f32, @floatFromInt(k)) / min - 1,
+                2 * @as(f32, @floatFromInt(i)) / min - 1,
             };
             var r = self.camera.castRayVar(rel_pos, self.variance, self.rand.random());
             rays.append(r) catch unreachable;
@@ -195,7 +197,7 @@ pub fn traceScene(self: *Tracer) void {
                     for (hits, 0..) |hit, j| {
                         const new_length = hit.position.sub(self.camera.position).length2();
                         if (new_length < closest) {
-                            index = @intCast(u32, j);
+                            index = @as(u32, @intCast(j));
                             closest = new_length;
                         }
                     }
@@ -291,21 +293,21 @@ pub fn boxHit(ray_d: Vec3, n_inv: Vec3, pos: Vec3, box: Box) ?SurfaceHit {
     const norm = blk: {
         if (tn > 0) {
             hit_pos = ray_d.sMult(tn);
-            const tnv = @splat(3, tn);
+            const tnv: @Vector(3, f32) = @splat(tn);
             break :blk -std.math.sign(ray_d.simd()) * @select(
                 f32,
                 t1 < tnv,
-                @splat(3, @as(f32, 0)),
-                @splat(3, @as(f32, 1)),
+                @as(@Vector(3, f32), @splat(0)),
+                @as(@Vector(3, f32), @splat(1)),
             );
         } else {
             hit_pos = ray_d.sMult(tf);
-            const tfv = @splat(3, tf);
+            const tfv: @Vector(3, f32) = @splat(tf);
             break :blk -std.math.sign(ray_d.simd()) * @select(
                 f32,
                 tfv < t2,
-                @splat(3, @as(f32, 0)),
-                @splat(3, @as(f32, 1)),
+                @as(@Vector(3, f32), @splat(0)),
+                @as(@Vector(3, f32), @splat(1)),
             );
         }
     };
@@ -318,14 +320,14 @@ pub fn boxHit(ray_d: Vec3, n_inv: Vec3, pos: Vec3, box: Box) ?SurfaceHit {
 pub fn trace(self: *Tracer, ray: Ray) []Hit {
     const a = self.f_a.allocator();
     const pos = ray.origin;
-    const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
+    const n_inv = Vec3.fromSimd(@as(@Vector(3, f32), @splat(1)) / ray.direction.simd());
     var hits = std.ArrayList(Hit).init(a);
     for (self.boxes.items, 0..) |box, i| {
         const hit = boxHit(ray.direction, n_inv, pos, box) orelse continue;
         hits.append(Hit{
             .position = hit.position,
             .normal = hit.normal,
-            .hit_index = @intCast(u32, i),
+            .hit_index = @as(u32, @intCast(i)),
         }) catch |err| {
             log.err("Failed to add to buffer in trace! Err: {}", .{err});
             return &.{};
@@ -381,58 +383,69 @@ pub fn tester() !void {
     if (@import("builtin").mode != .Debug) return;
 
     const box = Box{
-        .pos = .{ .x = 0, .y = 0, .z = 1 },
-        .size = .{ .x = 0.1, .y = 0.1, .z = 0.1 },
+        .pos = .{ .d = .{ 0, 0, 1 } },
+        .size = .{ .d = .{ 0.1, 0.1, 0.1 } },
     };
+    var counter: u32 = 1;
     {
         const ray = Ray{
-            .origin = Vec3{ .x = 1, .y = 0, .z = 1 },
-            .direction = Vec3{ .x = -1, .y = 0, .z = 0 },
+            .origin = Vec3{ .d = .{ 1, 0, 1 } },
+            .direction = Vec3{ .d = .{ -1, 0, 0 } },
         };
-        const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
+        const n_inv = Vec3.fromSimd(@as(@Vector(3, f32), @splat(1)) / ray.direction.simd());
         try std.testing.expect(
             Tracer.boxHit(ray.direction, n_inv, ray.origin, box) != null,
         );
-    }
+    } // 1
+    std.debug.print("Passed test {}!\n", .{counter});
+    counter += 1;
     {
         const ray = Ray{
-            .origin = Vec3{ .x = 0, .y = 0, .z = 0 },
-            .direction = Vec3{ .x = 0, .y = 0, .z = 1 },
+            .origin = Vec3{ .d = .{ 0, 0, 0 } },
+            .direction = Vec3{ .d = .{ 0, 0, 1 } },
         };
-        const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
+        const n_inv = Vec3.fromSimd(@as(@Vector(3, f32), @splat(1)) / ray.direction.simd());
         try std.testing.expect(
             Tracer.boxHit(ray.direction, n_inv, ray.origin, box) != null,
         );
-    }
+    } // 2
+    std.debug.print("Passed test {}!\n", .{counter});
+    counter += 1;
     {
         const ray = Ray{
-            .origin = Vec3{ .x = 0, .y = 0, .z = 2 },
-            .direction = Vec3{ .x = 0, .y = 0, .z = -1 },
+            .origin = Vec3{ .d = .{ 0, 0, 2 } },
+            .direction = Vec3{ .d = .{ 0, 0, -1 } },
         };
-        const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
+        const n_inv = Vec3.fromSimd(@as(@Vector(3, f32), @splat(1)) / ray.direction.simd());
         try std.testing.expect(
             Tracer.boxHit(ray.direction, n_inv, ray.origin, box) != null,
         );
-    }
+    } // 3
+    std.debug.print("Passed test {}!\n", .{counter});
+    counter += 1;
     {
         const ray = Ray{
-            .origin = Vec3{ .x = 0, .y = 0, .z = 0 },
-            .direction = Vec3{ .x = 0, .y = 1, .z = 0 },
+            .origin = Vec3{ .d = .{ 0, 0, 0 } },
+            .direction = Vec3{ .d = .{ 0, 1, 0 } },
         };
-        const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
+        const n_inv = Vec3.fromSimd(@as(@Vector(3, f32), @splat(1)) / ray.direction.simd());
         try std.testing.expect(
             Tracer.boxHit(ray.direction, n_inv, ray.origin, box) == null,
         );
-    }
+    } // 4
+    std.debug.print("Passed test {}!\n", .{counter});
+    counter += 1;
     {
         const ray = Ray{
-            .origin = Vec3{ .x = 0, .y = 0, .z = 0 },
-            .direction = Vec3{ .x = 0, .y = 0.7, .z = 0.7 },
+            .origin = Vec3{ .d = .{ 0, 0, 0 } },
+            .direction = Vec3{ .d = .{ 0, 0.7, 0.7 } },
         };
-        const n_inv = Vec3.fromSimd(@splat(3, @as(f32, 1)) / ray.direction.simd());
+        const n_inv = Vec3.fromSimd(@as(@Vector(3, f32), @splat(1)) / ray.direction.simd());
         try std.testing.expect(
             Tracer.boxHit(ray.direction, n_inv, ray.origin, box) == null,
         );
-    }
+    } // 5
+    std.debug.print("Passed test {}!\n", .{counter});
+    counter += 1;
     log.debug("Tests passed!", .{});
 }

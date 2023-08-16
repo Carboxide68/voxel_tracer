@@ -1,5 +1,4 @@
 const std = @import("std");
-const glfw = @import("deps/mach-glfw/build.zig");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -40,11 +39,16 @@ pub fn build(b: *std.Build) void {
         &[_][]const u8{"-DIMGUI_IMPL_API=extern \"C\""},
     );
 
-    exe.addLibraryPath("deps/lib/");
-    exe.addIncludePath("deps/include/");
-    exe.addIncludePath("deps/cimgui/");
-    exe.addIncludePath(imgui);
-    exe.addModule("glfw", glfw.module(b));
+    exe.addLibraryPath(.{ .path = "deps/lib/" });
+    exe.addIncludePath(.{ .path = "deps/include/" });
+    exe.addIncludePath(.{ .path = "deps/cimgui/" });
+    exe.addIncludePath(.{ .path = imgui });
+    const glfw_dep = b.dependency("mach_glfw", .{
+        .target = exe.target,
+        .optimize = exe.optimize,
+    });
+    exe.addModule("mach-glfw", glfw_dep.module("mach-glfw"));
+    try @import("mach_glfw").link(b, exe);
 
     if (target.isWindows()) {
         exe.linkSystemLibrary("gdi32");
@@ -57,7 +61,6 @@ pub fn build(b: *std.Build) void {
         exe.linkSystemLibrary("glew");
     }
 
-    glfw.link(b, exe, .{ .wayland = false }) catch unreachable;
     exe.linkLibC();
     exe.linkLibCpp();
 

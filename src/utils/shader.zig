@@ -33,7 +33,7 @@ const ProgramPart = struct {
         _,
 
         pub fn t(self: ProgramType) c.GLuint {
-            return @enumToInt(self);
+            return @intFromEnum(self);
         }
     };
 
@@ -130,8 +130,8 @@ pub const Shader = struct {
             var log_length: c.GLsizei = 0;
             var log: [2048]u8 = undefined;
 
-            c.glGetProgramInfoLog(handle, 2048, &log_length, @ptrCast([*c]u8, &log));
-            std.debug.print("Error linking file {s}!\n{s}\n", .{ file_path, log[0..@intCast(usize, log_length)] });
+            c.glGetProgramInfoLog(handle, 2048, &log_length, @as([*c]u8, @ptrCast(&log)));
+            std.debug.print("Error linking file {s}!\n{s}\n", .{ file_path, log[0..@as(usize, @intCast(log_length))] });
         }
 
         return Shader{ ._program_handle = handle, .a = a };
@@ -188,8 +188,8 @@ pub const Shader = struct {
 
         p._handle = c.glCreateShader(p.program_type.t());
         {
-            const length: c_int = @intCast(c_int, head.* - begin);
-            const tmp = @ptrCast([*c]const u8, &whole[begin]);
+            const length: c_int = @as(c_int, @intCast(head.* - begin));
+            const tmp = @as([*c]const u8, @ptrCast(&whole[begin]));
             c.glShaderSource(p._handle, 1, &tmp, &length);
             c.glCompileShader(p._handle);
         }
@@ -200,7 +200,7 @@ pub const Shader = struct {
             var log_length: c.GLsizei = 0;
             var log: [2048]u8 = undefined;
             c.glGetShaderInfoLog(p._handle, 2048, &log_length, &log);
-            std.debug.print("Error compiling {}! Error:\n{s}\n", .{ p.program_type, log[0..@intCast(usize, log_length)] });
+            std.debug.print("Error compiling {}! Error:\n{s}\n", .{ p.program_type, log[0..@as(usize, @intCast(log_length))] });
         }
 
         return p;

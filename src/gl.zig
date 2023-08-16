@@ -1,7 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.coxel);
 const c = @import("c.zig");
-const glfw = @import("glfw");
+const glfw = @import("mach-glfw");
 
 fn glfw_error_callback(error_code: glfw.ErrorCode, description: [:0]const u8) void {
     std.debug.print("GLFW error {}: {s}\n", .{ error_code, description });
@@ -9,14 +9,14 @@ fn glfw_error_callback(error_code: glfw.ErrorCode, description: [:0]const u8) vo
 
 fn framebuffer_callback(window: glfw.Window, width: u32, height: u32) void {
     _ = window;
-    const w = @intCast(i32, width);
-    const h = @intCast(i32, height);
+    const w: i32 = @intCast(width);
+    const h: i32 = @intCast(height);
 
     c.glViewport(0, 0, w, h);
 }
 
 fn opengl_error_callback(source: c.GLenum, error_type: c.GLenum, id: c.GLuint, severity: c.GLenum, length: c.GLsizei, message: [*c]const u8, _: ?*const anyopaque) callconv(.C) void {
-    const m = message[0..@intCast(usize, length)];
+    const m = message[0..@intCast(length)];
     _ = id;
     _ = source;
     _ = error_type;
